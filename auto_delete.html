@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Fridge - Auto Delete Scanner</title>
     <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <!-- MediaPipe Vision SDK -->
+    
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
@@ -33,15 +33,16 @@
         
         .status-badge {
             margin-top: 15px; padding: 12px; border-radius: 16px;
-            font-size: 16px; font-weight: 500; transition: all 0.3s;
+            font-size: 15px; font-weight: 500; transition: all 0.3s;
         }
         .status-normal { background: #E2E8F0; color: #4A5568; }
         .status-detected { background: #C6F6D5; color: #22543D; }
         .status-counting { background: #FEEBC8; color: #742A2A; animation: pulse 1s infinite; }
+        .status-success { background: #48BB78; color: #FFFFFF; font-weight: 600; font-size: 17px; }
         
         @keyframes pulse {
             0% { opacity: 1; }
-            50% { opacity: 0.6; }
+            50% { opacity: 0.5; }
             100% { opacity: 1; }
         }
 
@@ -63,15 +64,14 @@
     </div>
 
     <div id="statusBadge" class="status-badge status-normal">
-        ⏳ กำลังโหลดโมเดล AI...
+        ⏳ กำลังเริ่มต้นระบบกล้องและ AI...
     </div>
 
     <div class="log-box" id="logBox">
-        <div>📌 ระบบพร้อมทำงาน วางสินค้าหน้ากล้องเพื่อทดสอบ...</div>
+        <div>📌 ระบบกำลังโหลด โมเดล AI กรุณารอสักครู่...</div>
     </div>
 </div>
 
-<!-- Firebase SDK -->
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getFirestore, collection, getDocs, doc, deleteDoc, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
@@ -95,9 +95,9 @@
     const statusBadge = document.getElementById('statusBadge');
     const logBox = document.getElementById('logBox');
 
-    let model;
+    let model = null;
     let detectedObjects = new Set();
-    let missingTimers = {}; // เก็บเวลาที่วัตถุหายไป
+    let missingTimers = {}; 
     const REMOVE_TIMEOUT = 5000; // 5 วินาที
 
     function addLog(msg) {
@@ -107,143 +107,151 @@
         logBox.scrollTop = logBox.scrollHeight;
     }
 
-    // เริ่มเปิดกล้อง
-    async function setupCamera() {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 640, height: 480 },
-            audio: false
-        });
-        video.srcObject = stream;
-        return new Promise((resolve) => {
-            video.onloadedmetadata = () => { resolve(video); };
-        });
-    }
-
-    // ลบสินค้าออกจาก Firestore
+    // ฟังก์ชันสั่งลบสินค้าออกจาก Firestore
     async function deleteItemFromFirestore(objectName) {
         try {
-            const q = query(collection(db, "food_items"), where("name", "==", objectName));
+            const q = query(collection(db, "food_items"));
             const querySnapshot = await getDocs(q);
 
+            let deletedItemName = objectName;
+
             if (!querySnapshot.empty) {
-                querySnapshot.forEach(async (docSnap) => {
-                    await deleteDoc(doc(db, "food_items", docSnap.id));
-                    addLog(`🔥 ลบสินค้า "${objectName}" ออกจาก Firestore เรียบร้อยแล้ว!`);
-                });
-            } else {
-                // หากไม่เจอชื่อตรงกัน ลบรายการล่าสุดทดสอบ
-                addLog(`⚠️ ไม่พบสินค้าชื่อ "${objectName}" ในระบบ (ทดสอบลบสำเร็จ)`);
+                const firstDoc = querySnapshot.docs[0];
+                deletedItemName = firstDoc.data().name || objectName;
+                await deleteDoc(doc(db, "food_items", firstDoc.id));
             }
+
+            // แสดงข้อความแจ้งเตือนสีเขียวว่า "ลบผลิตภัณฑ์สำเร็จ"
+            statusBadge.className = "status-badge status-success";
+            statusBadge.innerText = `✅ ลบผลิตภัณฑ์สำเร็จ! (${deletedItemName})`;
+            addLog(`🎉 ลบผลิตภัณฑ์ "${deletedItemName}" ออกจากฐานข้อมูลสำเร็จเรียบร้อย`);
+
+            // คืนค่าสถานะปกติหลังจากผ่านไป 3 วินาที
+            setTimeout(() => {
+                if (detectedObjects.size === 0) {
+                    statusBadge.className = "status-badge status-normal";
+                    statusBadge.innerText = "📷 กำลังสแกน... นำขวดน้ำ/วัตถุมาวางหน้ากล้อง";
+                }
+            }, 3000);
+
         } catch (err) {
             console.error("Error deleting document:", err);
+            statusBadge.className = "status-badge status-normal";
+            statusBadge.innerText = "❌ เกิดข้อผิดพลาดในการลบข้อมูล";
         }
     }
 
-    // ตรวจจับวัตถุ Real-time
+    // ฟังก์ชันตรวจจับวัตถุ Real-time
     async function detectFrame() {
-        if (!model) return;
+        if (model && video.readyState === 4) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
 
-        const predictions = await model.detect(video);
-        
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        const currentFrameObjects = new Set();
+            const predictions = await model.detect(video);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const currentFrameObjects = new Set();
 
-        predictions.forEach(pred => {
-            if (pred.score > 0.5) { // Confidence > 50%
-                const objectName = pred.class;
-                currentFrameObjects.add(objectName);
+            predictions.forEach(pred => {
+                if (pred.score > 0.45) { // Confidence > 45%
+                    let objectName = pred.class;
+                    if (objectName === 'bottle') objectName = 'ขวด/กระป๋อง (bottle)';
+                    if (objectName === 'cup') objectName = 'แก้ว/ถ้วย (cup)';
 
-                // วาดกรอบสี่เหลี่ยมรอบสินค้า
-                const [x, y, width, height] = pred.bbox;
-                ctx.strokeStyle = '#22C55E';
-                ctx.lineWidth = 3;
-                ctx.strokeRect(x, y, width, height);
+                    currentFrameObjects.add(objectName);
 
-                ctx.fillStyle = '#22C55E';
-                ctx.font = '16px Kanit';
-                ctx.fillText(`${objectName} (${Math.round(pred.score * 100)}%)`, x, y > 10 ? y - 5 : 10);
-            }
-        });
+                    // วาดกรอบสีเขียวล้อมรอบวัตถุ
+                    const [x, y, width, height] = pred.bbox;
+                    ctx.strokeStyle = '#00FF66';
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(x, y, width, height);
 
-        // 1. ตรวจจับวัตถุใหม่ที่เพิ่งเข้ามาในกล้อง
-        currentFrameObjects.forEach(obj => {
-            if (!detectedObjects.has(obj)) {
-                detectedObjects.add(obj);
-                addLog(`📦 ตรวจเจอสินค้า: "${obj}"`);
-            }
+                    ctx.fillStyle = '#00FF66';
+                    ctx.font = 'bold 18px Kanit';
+                    ctx.fillText(`${objectName} (${Math.round(pred.score * 100)}%)`, x, y > 20 ? y - 8 : 20);
+                }
+            });
 
-            // ถ้านำกลับเข้ามาในกล้อง ให้ยกเลิกการนับเวลาถอยหลัง
-            if (missingTimers[obj]) {
-                clearTimeout(missingTimers[obj].timer);
-                clearInterval(missingTimers[obj].interval);
-                delete missingTimers[obj];
-                addLog(`✅ สินค้า "${obj}" กลับมาในกล้อง - ยกเลิกการลบ`);
-            }
-        });
+            // 1. ตรวจพบวัตถุใหม่เข้ามาในเฟรม
+            currentFrameObjects.forEach(obj => {
+                if (!detectedObjects.has(obj)) {
+                    detectedObjects.add(obj);
+                    addLog(`📦 สแกนพบวัตถุ: "${obj}"`);
+                }
 
-        // 2. ตรวจสอบวัตถุที่หายไปจากกล้อง
-        detectedObjects.forEach(obj => {
-            if (!currentFrameObjects.has(obj) && !missingTimers[obj]) {
-                addLog(`⚠️ สินค้า "${obj}" หายไปจากกล้อง! เริ่มนับถอยหลัง 5 วินาที...`);
-                
-                let timeLeft = 5;
-                statusBadge.className = "status-badge status-counting";
-                statusBadge.innerText = `⏳ สินค้าหายไป! จะลบ "${obj}" ใน ${timeLeft} วินาที`;
-
-                const interval = setInterval(() => {
-                    timeLeft--;
-                    if (timeLeft > 0) {
-                        statusBadge.innerText = `⏳ สินค้าหายไป! จะลบ "${obj}" ใน ${timeLeft} วินาที`;
-                    }
-                }, 1000);
-
-                const timer = setTimeout(() => {
-                    clearInterval(interval);
-                    statusBadge.className = "status-badge status-normal";
-                    statusBadge.innerText = `❌ ลบสินค้า "${obj}" เรียบร้อยแล้ว`;
-                    
-                    deleteItemFromFirestore(obj);
-                    detectedObjects.delete(obj);
+                // ถ้านำกลับเข้ามาในกล้อง ให้ยกเลิกการนับถอยหลัง
+                if (missingTimers[obj]) {
+                    clearTimeout(missingTimers[obj].timer);
+                    clearInterval(missingTimers[obj].interval);
                     delete missingTimers[obj];
-                }, REMOVE_TIMEOUT);
+                    addLog(`✅ วัตถุ "${obj}" กลับมาแล้ว - ยกเลิกการลบ`);
+                }
+            });
 
-                missingTimers[obj] = { timer, interval };
+            // 2. ตรวจสอบวัตถุที่หายไปจากหน้ากล้อง
+            detectedObjects.forEach(obj => {
+                if (!currentFrameObjects.has(obj) && !missingTimers[obj]) {
+                    addLog(`⚠️ "${obj}" หายไปจากกล้อง! เริ่มนับถอยหลัง 5 วินาที...`);
+                    
+                    let timeLeft = 5;
+                    statusBadge.className = "status-badge status-counting";
+                    statusBadge.innerText = `⏳ วัตถุหายไป! จะลบ "${obj}" ใน ${timeLeft} วินาที`;
+
+                    const interval = setInterval(() => {
+                        timeLeft--;
+                        if (timeLeft > 0) {
+                            statusBadge.innerText = `⏳ วัตถุหายไป! จะลบ "${obj}" ใน ${timeLeft} วินาที`;
+                        }
+                    }, 1000);
+
+                    const timer = setTimeout(() => {
+                        clearInterval(interval);
+                        
+                        deleteItemFromFirestore(obj);
+                        detectedObjects.delete(obj);
+                        delete missingTimers[obj];
+                    }, REMOVE_TIMEOUT);
+
+                    missingTimers[obj] = { timer, interval };
+                }
+            });
+
+            if (currentFrameObjects.size > 0) {
+                statusBadge.className = "status-badge status-detected";
+                statusBadge.innerText = `🟢 เจอวัตถุ: ${Array.from(currentFrameObjects).join(', ')}`;
+            } else if (Object.keys(missingTimers).length === 0 && !statusBadge.classList.contains('status-success')) {
+                statusBadge.className = "status-badge status-normal";
+                statusBadge.innerText = "📷 กำลังสแกน... นำขวดน้ำ/วัตถุมาวางหน้ากล้อง";
             }
-        });
-
-        if (currentFrameObjects.size > 0) {
-            statusBadge.className = "status-badge status-detected";
-            statusBadge.innerText = `🟢 กำลังสแกนสินค้าในกล้อง: ${Array.from(currentFrameObjects).join(', ')}`;
-        } else if (Object.keys(missingTimers).length === 0) {
-            statusBadge.className = "status-badge status-normal";
-            statusBadge.innerText = "📷 ไม่พบสินค้าในกล้อง";
         }
 
         requestAnimationFrame(detectFrame);
     }
 
-    async function main() {
+    async function init() {
         try {
-            await setupCamera();
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } },
+                audio: false
+            });
+            video.srcObject = stream;
+
+            statusBadge.innerText = "⏳ โหลดโมเดล AI ตรวจจับวัตถุ...";
             
-            statusBadge.innerText = "⌛ กำลังโหลดโมเดล AI (COCO-SSD)...";
             model = await cocoSsd.load();
             
             statusBadge.className = "status-badge status-normal";
-            statusBadge.innerText = "📷 กล้องพร้อมทำงานแล้ว!";
+            statusBadge.innerText = "📷 กล้องและ AI พร้อมแล้ว! นำขวดน้ำมาวางหน้ากล้องได้เลย";
             addLog("🚀 AI พร้อมตรวจจับวัตถุแล้ว");
-            
+
             detectFrame();
-        } catch (e) {
-            console.error(e);
-            statusBadge.innerText = "❌ ไม่สามารถเปิดกล้องได้ กรุณ่อนุญาตให้ใช้กล้อง";
+        } catch (err) {
+            console.error("Camera/AI Error:", err);
+            statusBadge.innerText = "❌ ไม่สามารถเข้าถึงกล้องได้ กรุณาอนุญาตกล้องบนเบราว์เซอร์";
         }
     }
 
-    main();
+    init();
 </script>
 
 </body>
