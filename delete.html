@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Fridge - ทดสอบระบบลบสินค้า</title>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; font-family: 'Kanit', sans-serif; }
+        body {
+            background: linear-gradient(135deg, #FFF7D6 0%, #FFF2B2 100%);
+            margin: 0; padding: 20px 15px;
+            display: flex; justify-content: center; align-items: center; min-height: 100vh;
+        }
+        .container {
+            background: #FFFFFF; padding: 30px 24px; border-radius: 28px;
+            box-shadow: 0 12px 32px rgba(127, 168, 214, 0.25);
+            max-width: 440px; width: 100%;
+        }
+        h2 { text-align: center; color: #4A5568; margin-top: 0; margin-bottom: 20px; }
+        .form-group { margin-bottom: 20px; }
+        label { font-weight: 500; display: block; margin-bottom: 8px; color: #5A6A85; }
+        select, input[type="text"] {
+            width: 100%; padding: 12px; border: none; border-bottom: 2px solid #FFE08A;
+            background-color: #FFFDF5; border-radius: 12px 12px 0 0; font-size: 15px; outline: none;
+        }
+        button {
+            width: 100%; padding: 14px; border: none; border-radius: 20px;
+            font-size: 16px; font-weight: 500; cursor: pointer; transition: 0.2s;
+        }
+        .btn-delete {
+            background: linear-gradient(135deg, #FF7B7B 0%, #FF5252 100%);
+            color: white; box-shadow: 0 6px 18px rgba(255, 82, 82, 0.3); margin-top: 15px;
+        }
+        .btn-delete:hover { transform: translateY(-2px); }
+        .item-card {
+            border: 1px solid #E2E8F0; border-radius: 16px; padding: 12px;
+            margin-top: 15px; display: flex; align-items: center; gap: 12px; background: #FAFBFD;
+        }
+        .item-card img { width: 60px; height: 60px; border-radius: 12px; object-fit: cover; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🗑️ ลบ/นำรายการอาหารออก</h2>
+
+    <!-- เลือกรายการที่มีอยู่ในตู้เย็น -->
+    <div class="form-group">
+        <label for="foodSelect">เลือกสินค้าที่ต้องการลบ:</label>
+        <select id="foodSelect" onchange="showSelectedItem()">
+            <option value="">-- กำลังโหลดรายการอาหาร... --</option>
+        </select>
+    </div>
+
+    <!-- แสดงพรีวิวสินค้าที่เลือก -->
+    <div id="itemPreview" class="item-card" style="display: none;">
+        <img id="previewImg" src="" alt="รูปสินค้า">
+        <div>
+            <strong id="previewName" style="color: #4A5568;">-</strong><br>
+            <small id="previewExp" style="color: #718096;">หมดอายุ: -</small>
+        </div>
+    </div>
+
+    <button type="button" class="btn-delete" id="btnDelete" onclick="deleteSelectedItem()">❌ ยืนยันการลบรายการนี้</button>
+</div>
+
+<!-- Firebase SDK -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getFirestore, collection, getDocs, doc, deleteDoc, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyByrRWviTEVOggThiJMJXsSwfpZ68-IxnU",
+        authDomain: "smart-fridge-ce1ed.firebaseapp.com",
+        projectId: "smart-fridge-ce1ed",
+        storageBucket: "smart-fridge-ce1ed.firebasestorage.app",
+        messagingSenderId: "280582221295",
+        appId: "1:280582221295:web:35b52f447a7a7454d75a1a",
+        measurementId: "G-M4410HZBQJ"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    let itemsList = [];
+
+    // ดึงรายการอาหารทั้งหมดจาก Firestore
+    async function loadFoodItems() {
+        const select = document.getElementById('foodSelect');
+        select.innerHTML = '<option value="">-- เลือกรายการอาหาร --</option>';
+        itemsList = [];
+
+        try {
+            const querySnapshot = await getDocs(collection(db, "food_items"));
+            querySnapshot.forEach((docSnap) => {
+                const data = docSnap.data();
+                itemsList.push({ id: docSnap.id, ...data });
+
+                const option = document.createElement('option');
+                option.value = docSnap.id;
+                option.textContent = `${data.name} (หมดอายุ: ${data.exp_date})`;
+                select.appendChild(option);
+            });
+        } catch (error) {
+            console.error("Error loading items: ", error);
+            alert("ไม่สามารถดึงข้อมูลรายการอาหารได้");
+        }
+    }
+
+    // แสดงรายละเอียดรูปเมื่อเลือกสินค้า
+    window.showSelectedItem = function() {
+        const selectId = document.getElementById('foodSelect').value;
+        const preview = document.getElementById('itemPreview');
+        const item = itemsList.find(i => i.id === selectId);
+
+        if (item) {
+            document.getElementById('previewName').innerText = item.name;
+            document.getElementById('previewExp').innerText = `หมดอายุ: ${item.exp_date}`;
+            document.getElementById('previewImg').src = item.product_image || '';
+            preview.style.display = 'flex';
+        } else {
+            preview.style.display = 'none';
+        }
+    }
+
+    // สั่งลบข้อมูลออกจาก Firestore
+    window.deleteSelectedItem = async function() {
+        const selectId = document.getElementById('foodSelect').value;
+        if (!selectId) {
+            alert("กรุณาเลือกรายการอาหารที่ต้องการลบก่อนครับ");
+            return;
+        }
+
+        if (confirm("คุณแน่ใจหรือไม่ว่าต้องการลบรายการนี้ออกจากฐานข้อมูล?")) {
+            try {
+                await deleteDoc(doc(db, "food_items", selectId));
+                alert("✅ ลบรายการอาหารเรียบร้อยแล้ว!");
+                loadFoodItems();
+                document.getElementById('itemPreview').style.display = 'none';
+            } catch (error) {
+                console.error("Error deleting document: ", error);
+                alert("เกิดข้อผิดพลาดในการลบ: " + error.message);
+            }
+        }
+    }
+
+    loadFoodItems();
+</script>
+
+</body>
+</html>
