@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Fridge - สแกนนำเข้าอาหาร</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+        .container {
+            background: #ffffff;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            max-width: 480px;
+            width: 100%;
+        }
+        h2 { text-align: center; color: #2c3e50; margin-top: 0; }
+        .form-group { margin-bottom: 20px; }
+        label { font-weight: bold; display: block; margin-bottom: 8px; color: #34495e; }
+        input[type="text"], input[type="date"] {
+            width: 100%; padding: 10px; border: 1px solid #ccc;
+            border-radius: 6px; box-sizing: border-box; font-size: 16px;
+        }
+        .camera-box {
+            border: 2px dashed #bdc3c7; border-radius: 8px;
+            padding: 10px; text-align: center; margin-bottom: 15px; background: #fafafa;
+        }
+        video, canvas {
+            width: 100%; max-height: 250px; border-radius: 6px; object-fit: cover;
+        }
+        button {
+            width: 100%; padding: 12px; background-color: #27ae60;
+            color: white; border: none; border-radius: 6px;
+            font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s;
+        }
+        button:hover { background-color: #219150; }
+        .btn-capture { background-color: #2980b9; margin-top: 8px; }
+        .btn-capture:hover { background-color: #1f618d; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🍎 สแกนนำเข้าอาหาร</h2>
+
+    <div class="form-group">
+        <label for="foodName">ชื่ออาหาร / ผลิตภัณฑ์</label>
+        <input type="text" id="foodName" placeholder="เช่น นมสด, โยเกิร์ต">
+    </div>
+
+    <!-- ถ่ายรูปที่ 1: ผลิตภัณฑ์ -->
+    <div class="form-group">
+        <label>1. ถ่ายรูปตัวผลิตภัณฑ์</label>
+        <div class="camera-box">
+            <video id="video1" autoplay playsinline></video>
+            <canvas id="canvas1" class="hidden"></canvas>
+            <button type="button" class="btn-capture" id="btnCapture1" onclick="takeSnapshot(1)">📸 ถ่ายรูปผลิตภัณฑ์</button>
+        </div>
+    </div>
+
+    <!-- ถ่ายรูปที่ 2: วันหมดอายุ -->
+    <div class="form-group">
+        <label>2. ถ่ายรูปวันหมดอายุบนซอง/กล่อง</label>
+        <div class="camera-box">
+            <video id="video2" autoplay playsinline></video>
+            <canvas id="canvas2" class="hidden"></canvas>
+            <button type="button" class="btn-capture" id="btnCapture2" onclick="takeSnapshot(2)">📸 ถ่ายรูปวันหมดอายุ</button>
+        </div>
+    </div>
+
+    <!-- กรอกวันหมดอายุ -->
+    <div class="form-group">
+        <label for="expDate">3. ระบุวันหมดอายุ (EXP Date)</label>
+        <input type="date" id="expDate">
+    </div>
+
+    <button type="button" id="btnSubmit" onclick="uploadData()">💾 บันทึกข้อมูลลง Firebase</button>
+</div>
+
+<!-- โหลด Firebase Firestore SDK -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getFirestore, collection, addDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyByrRWviTEVOggThiJMJXsSwfpZ68-IxnU",
+        authDomain: "smart-fridge-ce1ed.firebaseapp.com",
+        projectId: "smart-fridge-ce1ed",
+        storageBucket: "smart-fridge-ce1ed.firebasestorage.app",
+        messagingSenderId: "280582221295",
+        appId: "1:280582221295:web:35b52f447a7a7454d75a1a",
+        measurementId: "G-M4410HZBQJ"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // เปิดกล้อง WebCam
+    async function initCameras() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            document.getElementById('video1').srcObject = stream;
+            document.getElementById('video2').srcObject = stream;
+        } catch (err) {
+            console.error("ไม่สามารถเปิดกล้องได้: ", err);
+        }
+    }
+    initCameras();
+
+    let imgData1 = null;
+    let imgData2 = null;
+
+    // ถ่ายภาพและปรับขนาดรูปเพื่อประหยัดพื้นที่ Firestore
+    window.takeSnapshot = function(camNum) {
+        const video = document.getElementById(`video${camNum}`);
+        const canvas = document.getElementById(`canvas${camNum}`);
+        const ctx = canvas.getContext('2d');
+
+        // บีบอัดความกว้างสูงสุด 400px เพื่อย่อขนาดภาพ
+        const maxWidth = 400;
+        const scale = maxWidth / (video.videoWidth || 320);
+        canvas.width = maxWidth;
+        canvas.height = (video.videoHeight || 240) * scale;
+
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // แปลงรูปเป็น Base64 ที่บีบอัดคุณภาพแล้ว 0.6
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+        if (camNum === 1) imgData1 = dataUrl;
+        if (camNum === 2) imgData2 = dataUrl;
+
+        video.classList.add('hidden');
+        canvas.classList.remove('hidden');
+        document.getElementById(`btnCapture${camNum}`).innerText = "🔄 ถ่ายใหม่";
+    }
+
+    // บันทึกเข้า Firestore โดยตรง
+    window.uploadData = async function() {
+        const foodName = document.getElementById('foodName').value;
+        const expDate = document.getElementById('expDate').value;
+        const btnSubmit = document.getElementById('btnSubmit');
+
+        if (!foodName || !expDate || !imgData1 || !imgData2) {
+            alert("กรุณากรอกข้อมูลและถ่ายรูปให้ครบทั้ง 2 รูปครับ!");
+            return;
+        }
+
+        btnSubmit.disabled = true;
+        btnSubmit.innerText = "⏳ กำลังบันทึกข้อมูล...";
+
+        try {
+            await addDoc(collection(db, "food_items"), {
+                name: foodName,
+                exp_date: expDate,
+                product_image: imgData1, // บันทึกรูปเป็น Base64
+                exp_image: imgData2,     // บันทึกรูปเป็น Base64
+                status: "in_fridge",
+                missing_count: 0,
+                created_at: new Date()
+            });
+
+            alert("✅ บันทึกข้อมูลลง Firestore สำเร็จแล้ว!");
+            location.reload();
+
+        } catch (error) {
+            console.error("Error adding document: ", error);
+            alert("เกิดข้อผิดพลาด: " + error.message);
+            btnSubmit.disabled = false;
+            btnSubmit.innerText = "💾 บันทึกข้อมูลลง Firebase";
+        }
+    }
+</script>
+
+</body>
+</html>
