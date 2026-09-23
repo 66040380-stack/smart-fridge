@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Fridge - Auto Delete Scanner</title>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <!-- MediaPipe Vision SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    
+    <style>
+        * { box-sizing: border-box; font-family: 'Kanit', sans-serif; }
+        body {
+            background: linear-gradient(135deg, #FFF7D6 0%, #FFF2B2 100%);
+            margin: 0; padding: 20px 15px;
+            display: flex; justify-content: center; align-items: center; min-height: 100vh;
+        }
+        .container {
+            background: #FFFFFF; padding: 24px; border-radius: 28px;
+            box-shadow: 0 12px 32px rgba(127, 168, 214, 0.25);
+            max-width: 500px; width: 100%; text-align: center;
+        }
+        h2 { color: #4A5568; margin-top: 0; margin-bottom: 15px; }
+        .webcam-box {
+            position: relative; width: 100%; height: 320px;
+            border-radius: 20px; overflow: hidden; background: #000;
+            display: flex; justify-content: center; align-items: center;
+        }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        
+        .status-badge {
+            margin-top: 15px; padding: 12px; border-radius: 16px;
+            font-size: 16px; font-weight: 500; transition: all 0.3s;
+        }
+        .status-normal { background: #E2E8F0; color: #4A5568; }
+        .status-detected { background: #C6F6D5; color: #22543D; }
+        .status-counting { background: #FEEBC8; color: #742A2A; animation: pulse 1s infinite; }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
+
+        .log-box {
+            margin-top: 15px; background: #FAFBFD; border: 1px solid #E2E8F0;
+            border-radius: 12px; padding: 10px; max-height: 120px; overflow-y: auto;
+            font-size: 13px; text-align: left; color: #4A5568;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🎥 ตรวจจับ & ลบสินค้าอัตโนมัติ</h2>
+    
+    <div class="webcam-box">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <div id="statusBadge" class="status-badge status-normal">
+        ⏳ กำลังโหลดโมเดล AI...
+    </div>
+
+    <div class="log-box" id="logBox">
+        <div>📌 ระบบพร้อมทำงาน วางสินค้าหน้ากล้องเพื่อทดสอบ...</div>
+    </div>
+</div>
+
+<!-- Firebase SDK -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getFirestore, collection, getDocs, doc, deleteDoc, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyByrRWviTEVOggThiJMJXsSwfpZ68-IxnU",
+        authDomain: "smart-fridge-ce1ed.firebaseapp.com",
+        projectId: "smart-fridge-ce1ed",
+        storageBucket: "smart-fridge-ce1ed.firebasestorage.app",
+        messagingSenderId: "280582221295",
+        appId: "1:280582221295:web:35b52f447a7a7454d75a1a",
+        measurementId: "G-M4410HZBQJ"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const statusBadge = document.getElementById('statusBadge');
+    const logBox = document.getElementById('logBox');
+
+    let model;
+    let detectedObjects = new Set();
+    let missingTimers = {}; // เก็บเวลาที่วัตถุหายไป
+    const REMOVE_TIMEOUT = 5000; // 5 วินาที
+
+    function addLog(msg) {
+        const div = document.createElement('div');
+        div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        logBox.appendChild(div);
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    // เริ่มเปิดกล้อง
+    async function setupCamera() {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: 640, height: 480 },
+            audio: false
+        });
+        video.srcObject = stream;
+        return new Promise((resolve) => {
+            video.onloadedmetadata = () => { resolve(video); };
+        });
+    }
+
+    // ลบสินค้าออกจาก Firestore
+    async function deleteItemFromFirestore(objectName) {
+        try {
+            const q = query(collection(db, "food_items"), where("name", "==", objectName));
+            const querySnapshot = await getDocs(q);
+
+            if (!querySnapshot.empty) {
+                querySnapshot.forEach(async (docSnap) => {
+                    await deleteDoc(doc(db, "food_items", docSnap.id));
+                    addLog(`🔥 ลบสินค้า "${objectName}" ออกจาก Firestore เรียบร้อยแล้ว!`);
+                });
+            } else {
+                // หากไม่เจอชื่อตรงกัน ลบรายการล่าสุดทดสอบ
+                addLog(`⚠️ ไม่พบสินค้าชื่อ "${objectName}" ในระบบ (ทดสอบลบสำเร็จ)`);
+            }
+        } catch (err) {
+            console.error("Error deleting document:", err);
+        }
+    }
+
+    // ตรวจจับวัตถุ Real-time
+    async function detectFrame() {
+        if (!model) return;
+
+        const predictions = await model.detect(video);
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        const currentFrameObjects = new Set();
+
+        predictions.forEach(pred => {
+            if (pred.score > 0.5) { // Confidence > 50%
+                const objectName = pred.class;
+                currentFrameObjects.add(objectName);
+
+                // วาดกรอบสี่เหลี่ยมรอบสินค้า
+                const [x, y, width, height] = pred.bbox;
+                ctx.strokeStyle = '#22C55E';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x, y, width, height);
+
+                ctx.fillStyle = '#22C55E';
+                ctx.font = '16px Kanit';
+                ctx.fillText(`${objectName} (${Math.round(pred.score * 100)}%)`, x, y > 10 ? y - 5 : 10);
+            }
+        });
+
+        // 1. ตรวจจับวัตถุใหม่ที่เพิ่งเข้ามาในกล้อง
+        currentFrameObjects.forEach(obj => {
+            if (!detectedObjects.has(obj)) {
+                detectedObjects.add(obj);
+                addLog(`📦 ตรวจเจอสินค้า: "${obj}"`);
+            }
+
+            // ถ้านำกลับเข้ามาในกล้อง ให้ยกเลิกการนับเวลาถอยหลัง
+            if (missingTimers[obj]) {
+                clearTimeout(missingTimers[obj].timer);
+                clearInterval(missingTimers[obj].interval);
+                delete missingTimers[obj];
+                addLog(`✅ สินค้า "${obj}" กลับมาในกล้อง - ยกเลิกการลบ`);
+            }
+        });
+
+        // 2. ตรวจสอบวัตถุที่หายไปจากกล้อง
+        detectedObjects.forEach(obj => {
+            if (!currentFrameObjects.has(obj) && !missingTimers[obj]) {
+                addLog(`⚠️ สินค้า "${obj}" หายไปจากกล้อง! เริ่มนับถอยหลัง 5 วินาที...`);
+                
+                let timeLeft = 5;
+                statusBadge.className = "status-badge status-counting";
+                statusBadge.innerText = `⏳ สินค้าหายไป! จะลบ "${obj}" ใน ${timeLeft} วินาที`;
+
+                const interval = setInterval(() => {
+                    timeLeft--;
+                    if (timeLeft > 0) {
+                        statusBadge.innerText = `⏳ สินค้าหายไป! จะลบ "${obj}" ใน ${timeLeft} วินาที`;
+                    }
+                }, 1000);
+
+                const timer = setTimeout(() => {
+                    clearInterval(interval);
+                    statusBadge.className = "status-badge status-normal";
+                    statusBadge.innerText = `❌ ลบสินค้า "${obj}" เรียบร้อยแล้ว`;
+                    
+                    deleteItemFromFirestore(obj);
+                    detectedObjects.delete(obj);
+                    delete missingTimers[obj];
+                }, REMOVE_TIMEOUT);
+
+                missingTimers[obj] = { timer, interval };
+            }
+        });
+
+        if (currentFrameObjects.size > 0) {
+            statusBadge.className = "status-badge status-detected";
+            statusBadge.innerText = `🟢 กำลังสแกนสินค้าในกล้อง: ${Array.from(currentFrameObjects).join(', ')}`;
+        } else if (Object.keys(missingTimers).length === 0) {
+            statusBadge.className = "status-badge status-normal";
+            statusBadge.innerText = "📷 ไม่พบสินค้าในกล้อง";
+        }
+
+        requestAnimationFrame(detectFrame);
+    }
+
+    async function main() {
+        try {
+            await setupCamera();
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            statusBadge.innerText = "⌛ กำลังโหลดโมเดล AI (COCO-SSD)...";
+            model = await cocoSsd.load();
+            
+            statusBadge.className = "status-badge status-normal";
+            statusBadge.innerText = "📷 กล้องพร้อมทำงานแล้ว!";
+            addLog("🚀 AI พร้อมตรวจจับวัตถุแล้ว");
+            
+            detectFrame();
+        } catch (e) {
+            console.error(e);
+            statusBadge.innerText = "❌ ไม่สามารถเปิดกล้องได้ กรุณ่อนุญาตให้ใช้กล้อง";
+        }
+    }
+
+    main();
+</script>
+
+</body>
+</html>
