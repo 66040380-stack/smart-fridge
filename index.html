@@ -4,46 +4,159 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Fridge - สแกนนำเข้าอาหาร</title>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
+        * {
+            box-sizing: border-box;
+            font-family: 'Kanit', sans-serif;
+        }
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f4f7f6;
+            background: linear-gradient(135deg, #FFF7D6 0%, #FFF2B2 100%);
             margin: 0;
-            padding: 20px;
+            padding: 20px 15px;
             display: flex;
             justify-content: center;
+            align-items: center;
+            min-height: 100vh;
         }
         .container {
-            background: #ffffff;
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-            max-width: 480px;
+            background: #FFFFFF;
+            padding: 30px 24px;
+            border-radius: 28px;
+            box-shadow: 0 12px 32px rgba(127, 168, 214, 0.25);
+            max-width: 440px;
             width: 100%;
         }
-        h2 { text-align: center; color: #2c3e50; margin-top: 0; }
-        .form-group { margin-bottom: 20px; }
-        label { font-weight: bold; display: block; margin-bottom: 8px; color: #34495e; }
+        h2 {
+            text-align: center;
+            color: #4A5568;
+            margin-top: 0;
+            margin-bottom: 24px;
+            font-size: 24px;
+            font-weight: 600;
+        }
+        .form-group {
+            margin-bottom: 22px;
+        }
+        label {
+            font-weight: 500;
+            display: block;
+            margin-bottom: 8px;
+            color: #5A6A85;
+            font-size: 14px;
+        }
         input[type="text"], input[type="date"] {
-            width: 100%; padding: 10px; border: 1px solid #ccc;
-            border-radius: 6px; box-sizing: border-box; font-size: 16px;
+            width: 100%;
+            padding: 12px 14px;
+            border: none;
+            border-bottom: 2px solid #FFE08A;
+            background-color: #FFFDF5;
+            border-radius: 12px 12px 0 0;
+            font-size: 15px;
+            color: #333;
+            outline: none;
+            transition: all 0.3s ease;
         }
-        .camera-box {
-            border: 2px dashed #bdc3c7; border-radius: 8px;
-            padding: 10px; text-align: center; margin-bottom: 15px; background: #fafafa;
+        input[type="text"]:focus, input[type="date"]:focus {
+            border-bottom-color: #7FA8D6;
+            background-color: #F4F8FC;
         }
-        video, canvas {
-            width: 100%; max-height: 250px; border-radius: 6px; object-fit: cover;
+        
+        /* สไตล์พรีวิวรูปภาพในหน้าหลัก */
+        .preview-box {
+            border: 2px dashed #A8C6E7;
+            border-radius: 20px;
+            padding: 12px;
+            text-align: center;
+            background: #FAFBFD;
+            min-height: 120px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
         }
+        .preview-img {
+            width: 100%;
+            max-height: 180px;
+            border-radius: 14px;
+            object-fit: cover;
+            margin-bottom: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        }
+
         button {
-            width: 100%; padding: 12px; background-color: #27ae60;
-            color: white; border: none; border-radius: 6px;
-            font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s;
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #7FA8D6 0%, #A8C6E7 100%);
+            color: white;
+            border: none;
+            border-radius: 20px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            box-shadow: 0 6px 18px rgba(127, 168, 214, 0.4);
+            transition: all 0.2s ease-in-out;
         }
-        button:hover { background-color: #219150; }
-        .btn-capture { background-color: #2980b9; margin-top: 8px; }
-        .btn-capture:hover { background-color: #1f618d; }
-        .hidden { display: none; }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 22px rgba(127, 168, 214, 0.5);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .btn-capture {
+            background: linear-gradient(135deg, #FFE08A 0%, #FFF2B2 100%);
+            color: #5A4800;
+            box-shadow: 0 4px 14px rgba(255, 224, 138, 0.5);
+            padding: 10px 16px;
+            font-size: 14px;
+            border-radius: 16px;
+        }
+        
+        /* Modal สำหรับเปิดกล้องถ่ายรูป */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+        .modal-content {
+            background: #FFFFFF;
+            padding: 20px;
+            border-radius: 24px;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        video {
+            width: 100%;
+            max-height: 280px;
+            border-radius: 16px;
+            object-fit: cover;
+            background: #000;
+        }
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .btn-close {
+            background: #E2E8F0;
+            color: #4A5568;
+            box-shadow: none;
+        }
+        .hidden {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
@@ -56,23 +169,21 @@
         <input type="text" id="foodName" placeholder="เช่น นมสด, โยเกิร์ต">
     </div>
 
-    <!-- ถ่ายรูปที่ 1: ผลิตภัณฑ์ -->
+    <!-- ส่วนที่ 1: ผลิตภัณฑ์ -->
     <div class="form-group">
         <label>1. ถ่ายรูปตัวผลิตภัณฑ์</label>
-        <div class="camera-box">
-            <video id="video1" autoplay playsinline></video>
-            <canvas id="canvas1" class="hidden"></canvas>
-            <button type="button" class="btn-capture" id="btnCapture1" onclick="takeSnapshot(1)">📸 ถ่ายรูปผลิตภัณฑ์</button>
+        <div class="preview-box">
+            <img id="preview1" class="preview-img hidden" alt="รูปผลิตภัณฑ์">
+            <button type="button" class="btn-capture" id="btnOpenCam1" onclick="openCameraModal(1)">📸 กดเพื่อถ่ายรูปผลิตภัณฑ์</button>
         </div>
     </div>
 
-    <!-- ถ่ายรูปที่ 2: วันหมดอายุ -->
+    <!-- ส่วนที่ 2: วันหมดอายุ -->
     <div class="form-group">
         <label>2. ถ่ายรูปวันหมดอายุบนซอง/กล่อง</label>
-        <div class="camera-box">
-            <video id="video2" autoplay playsinline></video>
-            <canvas id="canvas2" class="hidden"></canvas>
-            <button type="button" class="btn-capture" id="btnCapture2" onclick="takeSnapshot(2)">📸 ถ่ายรูปวันหมดอายุ</button>
+        <div class="preview-box">
+            <img id="preview2" class="preview-img hidden" alt="รูปวันหมดอายุ">
+            <button type="button" class="btn-capture" id="btnOpenCam2" onclick="openCameraModal(2)">📸 กดเพื่อถ่ายรูปวันหมดอายุ</button>
         </div>
     </div>
 
@@ -83,6 +194,19 @@
     </div>
 
     <button type="button" id="btnSubmit" onclick="uploadData()">💾 บันทึกข้อมูลลง Firebase</button>
+</div>
+
+<!-- Modal กล้องถ่ายรูป -->
+<div id="cameraModal" class="modal">
+    <div class="modal-content">
+        <h3 id="modalTitle" style="margin-top:0; color:#4A5568;">📸 ถ่ายภาพ</h3>
+        <video id="webcamVideo" autoplay playsinline></video>
+        <canvas id="snapshotCanvas" class="hidden"></canvas>
+        <div class="modal-buttons">
+            <button type="button" class="btn-close" onclick="closeCameraModal()">ยกเลิก</button>
+            <button type="button" style="background: linear-gradient(135deg, #FFE08A 0%, #FFF2B2 100%); color: #5A4800;" onclick="capturePhoto()">ถ่ายรูป</button>
+        </div>
+    </div>
 </div>
 
 <!-- โหลด Firebase Firestore SDK -->
@@ -103,28 +227,50 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    // เปิดกล้อง WebCam
-    async function initCameras() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-            document.getElementById('video1').srcObject = stream;
-            document.getElementById('video2').srcObject = stream;
-        } catch (err) {
-            console.error("ไม่สามารถเปิดกล้องได้: ", err);
-        }
-    }
-    initCameras();
-
+    let currentCamNum = null;
+    let cameraStream = null;
     let imgData1 = null;
     let imgData2 = null;
 
-    // ถ่ายภาพและปรับขนาดรูปเพื่อประหยัดพื้นที่ Firestore
-    window.takeSnapshot = function(camNum) {
-        const video = document.getElementById(`video${camNum}`);
-        const canvas = document.getElementById(`canvas${camNum}`);
+    // เปิด Modal และเริ่มใช้งานกล้อง
+    window.openCameraModal = async function(camNum) {
+        currentCamNum = camNum;
+        const modal = document.getElementById('cameraModal');
+        const modalTitle = document.getElementById('modalTitle');
+        const video = document.getElementById('webcamVideo');
+
+        modalTitle.innerText = camNum === 1 ? "📸 ถ่ายรูปผลิตภัณฑ์" : "📸 ถ่ายรูปวันหมดอายุ";
+        modal.style.display = "flex";
+
+        try {
+            cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            video.srcObject = cameraStream;
+        } catch (err) {
+            console.error("ไม่สามารถเปิดกล้องได้: ", err);
+            alert("ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตการใช้งานกล้องบนเบราว์เซอร์");
+            closeCameraModal();
+        }
+    }
+
+    // ปิด Modal และหยุดสตรีมกล้อง
+    window.closeCameraModal = function() {
+        const modal = document.getElementById('cameraModal');
+        const video = document.getElementById('webcamVideo');
+
+        if (cameraStream) {
+            cameraStream.getTracks().forEach(track => track.stop());
+            cameraStream = null;
+        }
+        video.srcObject = null;
+        modal.style.display = "none";
+    }
+
+    // ถ่ายภาพ ปรับขนาด และแสดงพรีวิว
+    window.capturePhoto = function() {
+        const video = document.getElementById('webcamVideo');
+        const canvas = document.getElementById('snapshotCanvas');
         const ctx = canvas.getContext('2d');
 
-        // บีบอัดความกว้างสูงสุด 400px เพื่อย่อขนาดภาพ
         const maxWidth = 400;
         const scale = maxWidth / (video.videoWidth || 320);
         canvas.width = maxWidth;
@@ -132,17 +278,24 @@
 
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // แปลงรูปเป็น Base64 ที่บีบอัดคุณภาพแล้ว 0.6
         const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
-        if (camNum === 1) imgData1 = dataUrl;
-        if (camNum === 2) imgData2 = dataUrl;
 
-        video.classList.add('hidden');
-        canvas.classList.remove('hidden');
-        document.getElementById(`btnCapture${camNum}`).innerText = "🔄 ถ่ายใหม่";
+        if (currentCamNum === 1) {
+            imgData1 = dataUrl;
+            document.getElementById('preview1').src = dataUrl;
+            document.getElementById('preview1').classList.remove('hidden');
+            document.getElementById('btnOpenCam1').innerText = "🔄 ถ่ายรูปผลิตภัณฑ์ใหม่";
+        } else if (currentCamNum === 2) {
+            imgData2 = dataUrl;
+            document.getElementById('preview2').src = dataUrl;
+            document.getElementById('preview2').classList.remove('hidden');
+            document.getElementById('btnOpenCam2').innerText = "🔄 ถ่ายรูปวันหมดอายุใหม่";
+        }
+
+        closeCameraModal();
     }
 
-    // บันทึกเข้า Firestore โดยตรง
+    // บันทึกข้อมูลเข้า Firestore
     window.uploadData = async function() {
         const foodName = document.getElementById('foodName').value;
         const expDate = document.getElementById('expDate').value;
@@ -160,14 +313,14 @@
             await addDoc(collection(db, "food_items"), {
                 name: foodName,
                 exp_date: expDate,
-                product_image: imgData1, // บันทึกรูปเป็น Base64
-                exp_image: imgData2,     // บันทึกรูปเป็น Base64
+                product_image: imgData1,
+                exp_image: imgData2,
                 status: "in_fridge",
                 missing_count: 0,
                 created_at: new Date()
             });
 
-            alert("✅ บันทึกข้อมูลลง Firestore สำเร็จแล้ว!");
+            alert("✅ บันทึกข้อมูลเรียบร้อยแล้ว!");
             location.reload();
 
         } catch (error) {
